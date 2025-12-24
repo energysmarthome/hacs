@@ -1,0 +1,41 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "OpenAI-kompatibilis TTS",
+        "description": "Állítsd be az OpenAI-kompatibilis TTS HTTP végpontot.",
+        "data": {
+          "name": "Név",
+          "api_url": "TTS endpoint URL",
+          "api_token": "Bearer token",
+          "default_language": "Alapértelmezett nyelv (Home Assistant)",
+          "model": "Modell",
+          "voice": "Hang",
+          "speed": "Sebesség",
+          "timeout": "HTTP timeout (másodperc)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Nem sikerült kapcsolódni.",
+      "invalid_auth": "Érvénytelen token / nincs jogosultság.",
+      "unknown": "Váratlan hiba."
+    },
+    "abort": {
+      "already_configured": "Ez a végpont már be van állítva."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Beállítások",
+        "data": {
+          "model": "Modell",
+          "voice": "Hang",
+          "speed": "Sebesség",
+          "timeout": "HTTP timeout (másodperc)"
+        }
+      }
+    }
+  }
+}

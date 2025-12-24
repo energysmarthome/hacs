@@ -1,0 +1,44 @@
+# OS fájlok
+.DS_Store
+Thumbs.db
+
+# IDE / Editor beállítások
+.vscode/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Log és cache fájlok
+*.log
+*.tmp
+*.bak
+*.swp
+.cache/
+__pycache__/
+
+# Környezeti változók, konfigurációk
+.env
+.env.local
+*.secret
+
+# Build output
+dist/
+build/
+out/
+bin/
+obj/
+
+# Függőségek
+node_modules/
+vendor/
+
+# Teszt eredmények
+coverage/
+pytest_cache/
+
+# Virtuális környezetek
+venv/
+.env/
+.venv/

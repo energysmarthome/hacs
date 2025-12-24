@@ -1,0 +1,41 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "OpenAI Compatible TTS",
+        "description": "Configure the OpenAI-compatible TTS HTTP endpoint.",
+        "data": {
+          "name": "Name",
+          "api_url": "TTS endpoint URL",
+          "api_token": "Bearer token",
+          "default_language": "Default language (Home Assistant)",
+          "model": "Model",
+          "voice": "Voice",
+          "speed": "Speed",
+          "timeout": "HTTP timeout (seconds)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect.",
+      "invalid_auth": "Invalid token / unauthorized.",
+      "unknown": "Unexpected error."
+    },
+    "abort": {
+      "already_configured": "This endpoint is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Options",
+        "data": {
+          "model": "Model",
+          "voice": "Voice",
+          "speed": "Speed",
+          "timeout": "HTTP timeout (seconds)"
+        }
+      }
+    }
+  }
+}
