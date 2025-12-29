@@ -1,0 +1,17 @@
+{
+  "title": "enSmart képelemzés",
+  "config": {
+    "step": {
+      "user": {
+        "title": "enSmart képelemzés",
+        "description": "A szolgáltatás a token-t a `input_text.ensmart_http_api_token` entitásból olvassa ki. A végpont fixen az enSmart OpenAI proxy URL-je.",
+        "data": {
+          "default_model": "Alapértelmezett modell",
+          "temperature": "Temperature",
+          "top_p": "Top P",
+          "system_prompt": "System prompt"
+        }
+      }
+    }
+  }
+}

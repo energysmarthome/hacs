@@ -1,0 +1,10 @@
+{
+    "domain": "ensmart_kepelemzes",
+    "name": "enSmart képelemzés",
+    "config_flow": true,
+    "iot_class": "cloud_polling",
+    "requirements": [
+        "aiofile==3.9.0"
+    ],
+    "version": "1.0.1"
+}
