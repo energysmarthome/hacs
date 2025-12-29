@@ -1,36 +1,35 @@
-"""TTS platform for an OpenAI-compatible /v1/audio/speech endpoint.
+"""TTS platform for the enSmart cloud endpoint.
 
-This integration exposes a single **tts** entity.
+- The API URL is fixed: https://api.energysmarthome.cloud/ai/openai/tts
+- The Bearer token is read live from: input_text.ensmart_http_api_token
 
-We intentionally override `async_speak` to generate a normal `/local/...` URL
-and play that back, instead of relying on the `/api/tts_proxy/...` streaming
-route. In your logs we repeatedly saw:
-
-    "TTS engine name is not set"
-
-which prevents playback in certain setups.
+Why:
+- You can rotate tokens without reconfiguring the integration.
+- Assist UI won't get stuck on an empty 'voice' selector when you use server-side default voice.
 """
 
 from __future__ import annotations
 
-import hashlib
 import logging
-import pathlib
-import secrets
 from typing import Any, Mapping
 
 import aiohttp
-
-from homeassistant.components.tts import TextToSpeechEntity, TtsAudioType
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+import asyncio
+from homeassistant.const import CONF_NAME
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+
+from homeassistant.components.tts import TextToSpeechEntity
+
+try:
+    # Newer HA has a Voice dataclass (with variants)
+    from homeassistant.components.tts.models import Voice as HAVoice  # type: ignore
+except Exception:  # pragma: no cover
+    HAVoice = None  # type: ignore[assignment]
 
 from .const import (
-    CONF_API_TOKEN,
-    CONF_API_URL,
+    API_URL,
     CONF_DEFAULT_LANGUAGE,
     CONF_MODEL,
     CONF_SPEED,
@@ -38,227 +37,150 @@ from .const import (
     CONF_VOICE,
     DEFAULT_LANGUAGE,
     DEFAULT_MODEL,
+    DEFAULT_NAME,
     DEFAULT_SPEED,
     DEFAULT_TIMEOUT,
     DEFAULT_VOICE,
     DOMAIN,
     SUPPORTED_VOICES,
+    SUPPORTED_VOICES_ALL,
+    TOKEN_ENTITY_ID,
+    VOICE_SERVER_DEFAULT,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 
-async def async_setup_entry(
-    hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
-) -> None:
-    """Set up TTS entity from a config entry."""
-    async_add_entities([OpenAICompatTTSEntity(hass, entry)], update_before_add=False)
+async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities) -> None:
+    async_add_entities([EnsmartTextToSpeechEntity(hass, entry)])
 
 
-class OpenAICompatTTSEntity(TextToSpeechEntity):
-    """Represent an OpenAI-compatible TTS service."""
+def _read_bearer_token(hass: HomeAssistant) -> str:
+    state = hass.states.get(TOKEN_ENTITY_ID)
+    if state is None:
+        raise HomeAssistantError(
+            f"Missing {TOKEN_ENTITY_ID}. Create it in Helpers (Input text) and paste the token."
+        )
+
+    token = (state.state or "").strip()
+    if not token or token.lower() in ("unknown", "unavailable"):
+        raise HomeAssistantError(
+            f"{TOKEN_ENTITY_ID} is empty. Paste your bearer token into this input_text helper."
+        )
+    return token
+
+
+class EnsmartTextToSpeechEntity(TextToSpeechEntity):
+    """Represent the enSmart TTS entity."""
 
     _attr_has_entity_name = True
-    _attr_name = None  # Use config entry title
+    _attr_should_poll = False
 
-    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+    def __init__(self, hass: HomeAssistant, entry) -> None:
         self.hass = hass
-        self.entry = entry
-        self._session = async_get_clientsession(hass)
+        self._entry_id = entry.entry_id
+        self._name = entry.data.get(CONF_NAME, DEFAULT_NAME)
 
-        self._attr_unique_id = entry.entry_id
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, entry.entry_id)},
-            "name": entry.title,
-            "manufacturer": "OpenAI-compatible",
-            "model": "TTS HTTP API",
-        }
+        # Defaults (can be overridden by per-call options)
+        opts = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
+        self._model = opts.get(CONF_MODEL, DEFAULT_MODEL)
+        self._voice = opts.get(CONF_VOICE, DEFAULT_VOICE)
+        self._speed = float(opts.get(CONF_SPEED, DEFAULT_SPEED))
+        self._timeout = int(opts.get(CONF_TIMEOUT, DEFAULT_TIMEOUT))
+        self._default_language = opts.get(CONF_DEFAULT_LANGUAGE, DEFAULT_LANGUAGE)
 
-    def _cfg(self) -> dict[str, Any]:
-        merged = self.hass.data.get(DOMAIN, {}).get(self.entry.entry_id)
-        if isinstance(merged, dict):
-            return merged
-        return {**self.entry.data, **(self.entry.options or {})}
+        self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}"
 
-    # ---- Home Assistant required / expected properties ----
+    @property
+    def name(self) -> str:
+        return self._name
 
     @property
     def supported_languages(self) -> list[str]:
-        # The OpenAI TTS API infers language from text, but HA requires a list.
-        return [str(self._cfg().get(CONF_DEFAULT_LANGUAGE, DEFAULT_LANGUAGE))]
+        # Your endpoint can likely speak many languages, but Assist uses this list
+        # to decide what it can request. Keep Hungarian as the primary default.
+        return [self._default_language]
 
     @property
     def default_language(self) -> str:
-        return str(self._cfg().get(CONF_DEFAULT_LANGUAGE, DEFAULT_LANGUAGE))
+        return self._default_language
 
     @property
     def supported_options(self) -> list[str] | None:
-        return ["model", "voice", "speed"]
+        # If we let the server decide the voice, don't advertise voice as an option,
+        # so Assist won't force selecting one.
+        if self._voice == VOICE_SERVER_DEFAULT:
+            return None
+        return [CONF_VOICE]
 
     @property
     def default_options(self) -> Mapping[str, Any] | None:
-        cfg = self._cfg()
+        # Keep these as integration-level defaults
         return {
-            "model": cfg.get(CONF_MODEL, DEFAULT_MODEL),
-            "voice": cfg.get(CONF_VOICE, DEFAULT_VOICE),
-            "speed": cfg.get(CONF_SPEED, DEFAULT_SPEED),
+            CONF_MODEL: self._model,
+            CONF_SPEED: self._speed,
+            CONF_TIMEOUT: self._timeout,
+            # Only include voice if not server default
+            **({CONF_VOICE: self._voice} if self._voice != VOICE_SERVER_DEFAULT else {}),
         }
 
-    def async_get_supported_voices(self, language: str) -> list[str] | None:  # noqa: ARG002
-        return SUPPORTED_VOICES
-
-    # ---- Core audio generation ----
+    @callback
+    def async_get_supported_voices(self, language: str) -> list[Any] | None:
+        # Return Voice objects on new HA, or strings on old HA
+        if HAVoice is not None:
+            return [
+                HAVoice(voice_id=v, name=("Server default" if v == VOICE_SERVER_DEFAULT else v), variants=[])
+                for v in SUPPORTED_VOICES_ALL
+            ]
+        return SUPPORTED_VOICES_ALL
 
     async def async_get_tts_audio(
         self, message: str, language: str, options: dict[str, Any]
-    ) -> TtsAudioType:
-        """Return (extension, bytes) for the given message."""
-        cfg = self._cfg()
+    ):
+        token = _read_bearer_token(self.hass)
 
-        url: str | None = cfg.get(CONF_API_URL)
-        token: str | None = cfg.get(CONF_API_TOKEN)
-        if not url:
-            raise HomeAssistantError("enSmart TTS: hiányzó api_url")
-        if token is None:
-            # Token optional if user wants no-auth (custom endpoint). If they entered
-            # empty string, treat as missing.
-            token = ""
+        model = options.get(CONF_MODEL, self._model)
+        voice = options.get(CONF_VOICE, self._voice)
+        speed = float(options.get(CONF_SPEED, self._speed))
+        timeout = int(options.get(CONF_TIMEOUT, self._timeout))
 
-        model = str(options.get("model") or cfg.get(CONF_MODEL) or DEFAULT_MODEL)
-        voice = str(options.get("voice") or cfg.get(CONF_VOICE) or DEFAULT_VOICE)
-        speed = float(options.get("speed") or cfg.get(CONF_SPEED) or DEFAULT_SPEED)
-        timeout_s = int(cfg.get(CONF_TIMEOUT) or DEFAULT_TIMEOUT)
-
-        payload = {
+        payload: dict[str, Any] = {
             "model": model,
             "input": message,
-            "voice": voice,
-            "response_format": "mp3",
             "speed": speed,
         }
+        if voice and voice != VOICE_SERVER_DEFAULT:
+            payload["voice"] = voice
 
         headers = {
+            "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
-            "Accept": "audio/mpeg",
-            "Accept-Encoding": "identity",
-            "User-Agent": "enSmart-TTS",
         }
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
 
+        session = async_get_clientsession(self.hass)
         try:
-            async with self._session.post(
-                url,
+            async with session.post(
+                API_URL,
                 json=payload,
                 headers=headers,
-                timeout=aiohttp.ClientTimeout(total=timeout_s),
+                timeout=aiohttp.ClientTimeout(total=timeout),
             ) as resp:
-                if resp.status in (401, 403):
-                    raise HomeAssistantError(
-                        "enSmart TTS: hibás token / nincs jogosultság"
-                    )
-
                 if resp.status >= 400:
-                    try:
-                        body = await resp.text()
-                    except Exception:  # noqa: BLE001
-                        body = "<nem olvasható>"
-                    _LOGGER.error(
-                        "TTS endpoint HTTP %s. URL=%s, body=%s",
-                        resp.status,
-                        url,
-                        body[:500],
-                    )
-                    raise HomeAssistantError(f"enSmart TTS: HTTP {resp.status}")
-
-                content_type = (resp.headers.get("Content-Type") or "").lower()
-
-                # Some proxies return JSON that contains a byte array (Node-RED style).
-                if "application/json" in content_type:
-                    data = await resp.json(content_type=None)
-                    payload_arr = data.get("payload")
-                    if isinstance(payload_arr, list):
-                        return ("mp3", bytes(payload_arr))
+                    # try to extract useful error
+                    content_type = (resp.headers.get("Content-Type") or "").lower()
+                    body = await resp.text()
                     raise HomeAssistantError(
-                        "enSmart TTS: JSON válasz, de hiányzik a 'payload' byte tömb"
+                        f"TTS request failed ({resp.status}). {body[:500]}"
+                        if "json" in content_type or body
+                        else f"TTS request failed ({resp.status})."
                     )
 
                 audio = await resp.read()
-                if not audio:
-                    raise HomeAssistantError("enSmart TTS: üres audio válasz")
-                return ("mp3", audio)
-        except (aiohttp.ClientError, TimeoutError) as err:
-            raise HomeAssistantError(f"enSmart TTS: hálózati hiba: {err}") from err
 
-    # ---- Playback (workaround for /api/tts_proxy engine problems) ----
+        except asyncio.TimeoutError as err:  # type: ignore[name-defined]
+            raise HomeAssistantError(f"TTS request timed out after {timeout}s") from err
+        except aiohttp.ClientError as err:
+            raise HomeAssistantError(f"TTS request error: {err}") from err
 
-    async def async_speak(
-        self,
-        media_player_entity_id: str,
-        message: str,
-        cache: bool = True,
-        language: str | None = None,
-        options: dict[str, Any] | None = None,
-        **kwargs: Any,  # noqa: ARG002
-    ) -> None:
-        """Generate audio, save under /config/www, and play via /local URL."""
-        lang = language or self.default_language
-        opts = options or {}
-
-        extension, audio = await self.async_get_tts_audio(message, lang, opts)
-
-        www_dir = pathlib.Path(self.hass.config.path("www")) / "ensmart_tts"
-        await self.hass.async_add_executor_job(
-            lambda: www_dir.mkdir(parents=True, exist_ok=True)
-        )
-
-        if cache:
-            key_src = (
-                f"{message}|{lang}|{opts.get('model')}|{opts.get('voice')}|"
-                f"{opts.get('speed')}|{self.entry.entry_id}"
-            )
-            file_id = hashlib.sha1(key_src.encode("utf-8")).hexdigest()  # noqa: S324
-        else:
-            file_id = secrets.token_urlsafe(16)
-
-        filename = f"{file_id}.{extension}"
-        filepath = www_dir / filename
-
-        if not filepath.exists():
-            await self.hass.async_add_executor_job(filepath.write_bytes, audio)
-
-        # Prefer internal_url (your LAN URL), fall back to helper if available.
-        base_url = (self.hass.config.internal_url or "").rstrip("/")
-        if not base_url:
-            try:
-                from homeassistant.helpers.network import get_url
-
-                base_url = get_url(self.hass).rstrip("/")
-            except Exception:  # noqa: BLE001
-                base_url = ""
-
-        media_url = (
-            f"{base_url}/local/ensmart_tts/{filename}"
-            if base_url
-            else f"/local/ensmart_tts/{filename}"
-        )
-
-        _LOGGER.debug(
-            "Playing TTS: player=%s url=%s bytes=%s",
-            media_player_entity_id,
-            media_url,
-            len(audio),
-        )
-
-        await self.hass.services.async_call(
-            "media_player",
-            "play_media",
-            {
-                "entity_id": media_player_entity_id,
-                "media_content_id": media_url,
-                "media_content_type": "music",
-            },
-            blocking=True,
-        )
+        # Assume mp3 unless your API says otherwise
+        return "mp3", audio

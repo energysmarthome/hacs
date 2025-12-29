@@ -1,0 +1,18 @@
+{
+  "domain": "ensmart_conversation",
+  "name": "enSmart conversation",
+  "after_dependencies": [
+    "assist_pipeline",
+    "intent"
+  ],
+  "codeowners": [],
+  "config_flow": true,
+  "dependencies": [
+    "conversation"
+  ],
+  "documentation": "https://www.home-assistant.io/",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "requirements": [],
+  "version": "1.1.2"
+}
