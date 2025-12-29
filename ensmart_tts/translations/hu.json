@@ -1,41 +1,14 @@
 {
+  "title": "enSmart TTS",
   "config": {
     "step": {
       "user": {
-        "title": "OpenAI-kompatibilis TTS",
-        "description": "Állítsd be az OpenAI-kompatibilis TTS HTTP végpontot.",
-        "data": {
-          "name": "Név",
-          "api_url": "TTS endpoint URL",
-          "api_token": "Bearer token",
-          "default_language": "Alapértelmezett nyelv (Home Assistant)",
-          "model": "Modell",
-          "voice": "Hang",
-          "speed": "Sebesség",
-          "timeout": "HTTP timeout (másodperc)"
-        }
+        "title": "enSmart TTS",
+        "description": "Nincs szükség beállításra. A Bearer token az input_text.ensmart_http_api_token entitásból kerül kiolvasásra."
       }
-    },
-    "error": {
-      "cannot_connect": "Nem sikerült kapcsolódni.",
-      "invalid_auth": "Érvénytelen token / nincs jogosultság.",
-      "unknown": "Váratlan hiba."
     },
     "abort": {
-      "already_configured": "Ez a végpont már be van állítva."
-    }
-  },
-  "options": {
-    "step": {
-      "init": {
-        "title": "Beállítások",
-        "data": {
-          "model": "Modell",
-          "voice": "Hang",
-          "speed": "Sebesség",
-          "timeout": "HTTP timeout (másodperc)"
-        }
-      }
+      "already_configured": "Az enSmart TTS már hozzá van adva."
     }
   }
 }

@@ -1,0 +1,27 @@
+say:
+  name: Say
+  description: Speak a message on a media player using enSmart TTS (wrapper around tts.speak).
+  fields:
+    message:
+      required: true
+      selector:
+        text:
+    media_player_entity_id:
+      required: true
+      selector:
+        entity:
+          multiple: true
+          domain: media_player
+    language:
+      required: false
+      selector:
+        text:
+    cache:
+      required: false
+      default: true
+      selector:
+        boolean:
+    options:
+      required: false
+      selector:
+        object:

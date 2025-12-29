@@ -1,186 +1,138 @@
-"""TTS platform for the enSmart cloud endpoint.
-
-- The API URL is fixed: https://api.energysmarthome.cloud/ai/openai/tts
-- The Bearer token is read live from: input_text.ensmart_http_api_token
-
-Why:
-- You can rotate tokens without reconfiguring the integration.
-- Assist UI won't get stuck on an empty 'voice' selector when you use server-side default voice.
-"""
-
 from __future__ import annotations
 
-import logging
-from typing import Any, Mapping
-
-import aiohttp
 import asyncio
-from homeassistant.const import CONF_NAME
+from typing import Any
+
+from homeassistant.components.tts import TextToSpeechEntity, TtsAudioType
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-
-from homeassistant.components.tts import TextToSpeechEntity
-
-try:
-    # Newer HA has a Voice dataclass (with variants)
-    from homeassistant.components.tts.models import Voice as HAVoice  # type: ignore
-except Exception:  # pragma: no cover
-    HAVoice = None  # type: ignore[assignment]
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
     API_URL,
-    CONF_DEFAULT_LANGUAGE,
-    CONF_MODEL,
-    CONF_SPEED,
-    CONF_TIMEOUT,
-    CONF_VOICE,
-    DEFAULT_LANGUAGE,
+    DEFAULT_INSTRUCTIONS,
     DEFAULT_MODEL,
-    DEFAULT_NAME,
+    DEFAULT_RESPONSE_FORMAT,
     DEFAULT_SPEED,
-    DEFAULT_TIMEOUT,
+    DEFAULT_STREAM_FORMAT,
     DEFAULT_VOICE,
     DOMAIN,
-    SUPPORTED_VOICES,
-    SUPPORTED_VOICES_ALL,
     TOKEN_ENTITY_ID,
-    VOICE_SERVER_DEFAULT,
 )
 
-_LOGGER = logging.getLogger(__name__)
+
+async def async_setup_entry(
+    hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
+) -> None:
+    async_add_entities([EnSmartTTSEntity(hass)])
 
 
-async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities) -> None:
-    async_add_entities([EnsmartTextToSpeechEntity(hass, entry)])
+class EnSmartTTSEntity(TextToSpeechEntity):
+    """enSmart TTS entity."""
 
+    _attr_name = "enSmart TTS"
+    _attr_unique_id = f"{DOMAIN}_tts"
 
-def _read_bearer_token(hass: HomeAssistant) -> str:
-    state = hass.states.get(TOKEN_ENTITY_ID)
-    if state is None:
-        raise HomeAssistantError(
-            f"Missing {TOKEN_ENTITY_ID}. Create it in Helpers (Input text) and paste the token."
-        )
+    _attr_supported_languages = ["hu", "hu-HU"]
+    _attr_default_language = "hu-HU"
 
-    token = (state.state or "").strip()
-    if not token or token.lower() in ("unknown", "unavailable"):
-        raise HomeAssistantError(
-            f"{TOKEN_ENTITY_ID} is empty. Paste your bearer token into this input_text helper."
-        )
-    return token
+    _attr_supported_options = [
+        "model",
+        "voice",
+        "response_format",
+        "stream_format",
+        "speed",
+        "instructions",
+    ]
+    _attr_default_options = {
+        "model": DEFAULT_MODEL,
+        "voice": DEFAULT_VOICE,
+        "response_format": DEFAULT_RESPONSE_FORMAT,
+        "stream_format": DEFAULT_STREAM_FORMAT,
+        "speed": DEFAULT_SPEED,
+        "instructions": DEFAULT_INSTRUCTIONS,
+    }
 
-
-class EnsmartTextToSpeechEntity(TextToSpeechEntity):
-    """Represent the enSmart TTS entity."""
-
-    _attr_has_entity_name = True
-    _attr_should_poll = False
-
-    def __init__(self, hass: HomeAssistant, entry) -> None:
+    def __init__(self, hass: HomeAssistant) -> None:
         self.hass = hass
-        self._entry_id = entry.entry_id
-        self._name = entry.data.get(CONF_NAME, DEFAULT_NAME)
-
-        # Defaults (can be overridden by per-call options)
-        opts = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
-        self._model = opts.get(CONF_MODEL, DEFAULT_MODEL)
-        self._voice = opts.get(CONF_VOICE, DEFAULT_VOICE)
-        self._speed = float(opts.get(CONF_SPEED, DEFAULT_SPEED))
-        self._timeout = int(opts.get(CONF_TIMEOUT, DEFAULT_TIMEOUT))
-        self._default_language = opts.get(CONF_DEFAULT_LANGUAGE, DEFAULT_LANGUAGE)
-
-        self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}"
-
-    @property
-    def name(self) -> str:
-        return self._name
-
-    @property
-    def supported_languages(self) -> list[str]:
-        # Your endpoint can likely speak many languages, but Assist uses this list
-        # to decide what it can request. Keep Hungarian as the primary default.
-        return [self._default_language]
-
-    @property
-    def default_language(self) -> str:
-        return self._default_language
-
-    @property
-    def supported_options(self) -> list[str] | None:
-        # If we let the server decide the voice, don't advertise voice as an option,
-        # so Assist won't force selecting one.
-        if self._voice == VOICE_SERVER_DEFAULT:
-            return None
-        return [CONF_VOICE]
-
-    @property
-    def default_options(self) -> Mapping[str, Any] | None:
-        # Keep these as integration-level defaults
-        return {
-            CONF_MODEL: self._model,
-            CONF_SPEED: self._speed,
-            CONF_TIMEOUT: self._timeout,
-            # Only include voice if not server default
-            **({CONF_VOICE: self._voice} if self._voice != VOICE_SERVER_DEFAULT else {}),
-        }
+        self._last_input: str | None = None
+        self._last_payload: dict[str, Any] | None = None
 
     @callback
-    def async_get_supported_voices(self, language: str) -> list[Any] | None:
-        # Return Voice objects on new HA, or strings on old HA
-        if HAVoice is not None:
-            return [
-                HAVoice(voice_id=v, name=("Server default" if v == VOICE_SERVER_DEFAULT else v), variants=[])
-                for v in SUPPORTED_VOICES_ALL
-            ]
-        return SUPPORTED_VOICES_ALL
+    def async_get_supported_voices(self, language: str) -> list[str] | None:
+        return [DEFAULT_VOICE]
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        payload = dict(self._attr_default_options)
+        payload["input"] = self._last_input or ""
+
+        return {
+            "model": payload["model"],
+            "voice": payload["voice"],
+            "input": payload["input"],
+            "response_format": payload["response_format"],
+            "stream_format": payload["stream_format"],
+            "speed": payload["speed"],
+            "instructions": payload["instructions"],
+            "api_url": API_URL,
+            "token_entity_id": TOKEN_ENTITY_ID,
+        }
 
     async def async_get_tts_audio(
         self, message: str, language: str, options: dict[str, Any]
-    ):
-        token = _read_bearer_token(self.hass)
+    ) -> TtsAudioType:
+        token_state = self.hass.states.get(TOKEN_ENTITY_ID)
+        token = (token_state.state if token_state else "").strip()
 
-        model = options.get(CONF_MODEL, self._model)
-        voice = options.get(CONF_VOICE, self._voice)
-        speed = float(options.get(CONF_SPEED, self._speed))
-        timeout = int(options.get(CONF_TIMEOUT, self._timeout))
+        if not token or token in ("unknown", "unavailable"):
+            raise HomeAssistantError(
+                f"Hiányzó vagy érvénytelen token a {TOKEN_ENTITY_ID} entitásban."
+            )
 
-        payload: dict[str, Any] = {
-            "model": model,
-            "input": message,
-            "speed": speed,
-        }
-        if voice and voice != VOICE_SERVER_DEFAULT:
-            payload["voice"] = voice
+        payload: dict[str, Any] = dict(self._attr_default_options)
+        payload.update(options or {})
+        payload["input"] = message
+
+        self._last_input = message
+        self._last_payload = payload
+        self.async_write_ha_state()
+
+        session = async_get_clientsession(self.hass)
 
         headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
+            "Accept": "*/*",
         }
 
-        session = async_get_clientsession(self.hass)
         try:
-            async with session.post(
-                API_URL,
-                json=payload,
-                headers=headers,
-                timeout=aiohttp.ClientTimeout(total=timeout),
-            ) as resp:
-                if resp.status >= 400:
-                    # try to extract useful error
-                    content_type = (resp.headers.get("Content-Type") or "").lower()
-                    body = await resp.text()
-                    raise HomeAssistantError(
-                        f"TTS request failed ({resp.status}). {body[:500]}"
-                        if "json" in content_type or body
-                        else f"TTS request failed ({resp.status})."
-                    )
+            async with session.post(API_URL, json=payload, headers=headers) as resp:
+                resp.raise_for_status()
 
-                audio = await resp.read()
+                # (1) If server returns raw audio bytes:
+                ctype = (resp.headers.get("content-type") or "").lower()
+                if ctype.startswith("audio/"):
+                    audio_bytes = await resp.read()
+                    ext = str(payload.get("response_format", "mp3"))
+                    return (ext, audio_bytes)
 
-        except asyncio.TimeoutError as err:  # type: ignore[name-defined]
-            raise HomeAssistantError(f"TTS request timed out after {timeout}s") from err
-        except aiohttp.ClientError as err:
-            raise HomeAssistantError(f"TTS request error: {err}") from err
+                # (2) JSON with payload: [byte, byte, ...]
+                data = await resp.json(content_type=None)
+                raw = data.get("payload")
 
-        # Assume mp3 unless your API says otherwise
-        return "mp3", audio
+                if isinstance(raw, list) and raw and all(
+                    isinstance(x, int) and 0 <= x <= 255 for x in raw
+                ):
+                    audio_bytes = bytes(raw)
+                    ext = str(payload.get("response_format", "mp3"))
+                    return (ext, audio_bytes)
+
+                raise HomeAssistantError(
+                    f"Ismeretlen válaszformátum az enSmart TTS API-tól. content-type={ctype}, keys={list(data.keys())}"
+                )
+
+        except asyncio.TimeoutError as err:
+            raise HomeAssistantError("Időtúllépés az enSmart TTS API hívásakor.") from err
