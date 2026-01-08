@@ -9,5 +9,17 @@
         "description": "No configuration required. The integration will use the bearer token from input_text.ensmart_http_api_token."
       }
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "enSmart conversation settings",
+        "data": {
+          "temperature": "Temperature",
+          "top_p": "Top P",
+          "system_prompt": "System prompt (leave empty to keep HA's default system messages)"
+        }
+      }
+    }
   }
 }

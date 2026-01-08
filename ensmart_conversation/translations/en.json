@@ -5,7 +5,7 @@
     },
     "step": {
       "user": {
-        "title": "Set up EnergySmartHome OpenAI Conversation",
+        "title": "Set up EnergySmartHome Conversation",
         "description": "No configuration required. The integration will use the bearer token from input_text.ensmart_http_api_token."
       }
     }

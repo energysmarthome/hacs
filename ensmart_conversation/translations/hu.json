@@ -5,7 +5,7 @@
     },
     "step": {
       "user": {
-        "title": "EnergySmartHome OpenAI beszélgetés beállítása",
+        "title": "EnergySmartHome conversation beállítása",
         "description": "Nincs szükség konfigurációra. Az integráció a bearer tokent az input_text.ensmart_http_api_token entitásból fogja olvasni."
       }
     }
