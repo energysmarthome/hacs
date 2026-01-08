@@ -1,4 +1,4 @@
-"""Conversation support for EnergySmartHome proxy (with device control)."""
+"""Conversation support for EnergySmartHome OpenAI proxy (with device control)."""
 
 from __future__ import annotations
 
@@ -546,37 +546,6 @@ def _normalize_hass_set_position_args(args: dict[str, Any]) -> dict[str, Any]:
 
     return args
 
-
-def _normalize_hass_media_search_and_play_args(args: dict[str, Any]) -> dict[str, Any]:
-    """Normalize arguments for HassMediaSearchAndPlay to avoid InvalidSlotInfo.
-
-    Home Assistant expects the searchable text in the slot named `search_query`.
-    Models often send `query` (or `search`) instead. Convert those to `search_query`.
-    """
-    # Move common synonyms to the expected slot name
-    if "search_query" not in args:
-        if "query" in args:
-            args["search_query"] = args.pop("query")
-        elif "search" in args:
-            args["search_query"] = args.pop("search")
-        elif "q" in args:
-            args["search_query"] = args.pop("q")
-
-    # Ensure search_query is a string (best-effort)
-    sq = args.get("search_query")
-    if isinstance(sq, (list, tuple)):
-        args["search_query"] = " ".join(str(x) for x in sq if x is not None).strip()
-    elif sq is not None and not isinstance(sq, str):
-        args["search_query"] = str(sq)
-
-    # Drop empty search_query to prevent slot validation errors
-    if isinstance(args.get("search_query"), str) and not args["search_query"].strip():
-        args.pop("search_query", None)
-
-    return args
-
-
-
 def _extract_tool_calls(data: Any) -> list[dict[str, Any]]:
     """Extract tool calls from OpenAI-like response JSON.
 
@@ -626,8 +595,6 @@ def _extract_tool_calls(data: Any) -> list[dict[str, Any]]:
             args = _normalize_hass_light_set_args(args)
         if name == "HassSetPosition" and isinstance(args, dict):
             args = _normalize_hass_set_position_args(args)
-        if name == "HassMediaSearchAndPlay" and isinstance(args, dict):
-            args = _normalize_hass_media_search_and_play_args(args)
 
         out.append({"id": tc_id, "name": name, "arguments": args})
 
