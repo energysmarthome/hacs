@@ -1,0 +1,11 @@
+{
+  "domain": "ensmart_stt",
+  "name": "EnSmart STT",
+  "config_flow": true,
+  "documentation": "https://example.invalid/docs",
+  "issue_tracker": "https://example.invalid/issues",
+  "version": "0.1.2",
+  "iot_class": "cloud_push",
+  "requirements": [],
+  "codeowners": []
+}
